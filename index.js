@@ -19,6 +19,47 @@ const pool = new Pool({
     "postgresql://postgres:Qwaszx%402188@localhost:5432/unmute_db",
 });
 
+app.get("/api/init-db", async (req, res) => {
+  try {
+    const query = `
+      DROP TABLE IF EXISTS audit_logs;
+      DROP TABLE IF EXISTS bookings;
+      DROP TABLE IF EXISTS schools;
+
+      CREATE TABLE schools (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name VARCHAR(255) NOT NULL,
+          logo_url TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE bookings (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          booking_date DATE UNIQUE NOT NULL,
+          school_id UUID REFERENCES schools(id) ON DELETE CASCADE,
+          contact_name VARCHAR(255) NOT NULL,
+          phone_number VARCHAR(20) NOT NULL,
+          created_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE audit_logs (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          admin_id VARCHAR(255) NOT NULL,
+          action VARCHAR(50) NOT NULL,
+          target_id UUID NOT NULL,
+          old_values JSONB,
+          new_values JSONB,
+          timestamp TIMESTAMP DEFAULT NOW()
+      );
+    `;
+    await pool.query(query);
+    res.json({ message: "Database reinitialized successfully." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR", message: err.message });
+  }
+});
+
 const HOLIDAYS = [
   "2026-05-01",
   "2026-05-04",
