@@ -6,7 +6,11 @@ const ExcelJS = require("exceljs");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 const pool = new Pool({
@@ -489,15 +493,19 @@ app.get("/api/export/bookings", async (req, res) => {
       "Content-Disposition",
       "attachment; filename=daftar-booking-kegiatan.xlsx"
     );
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Pragma", "no-cache");
 
     await workbook.xlsx.write(res);
-    res.end();
+    return res.end();
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: "SERVER_ERROR",
-      message: "Gagal export data booking.",
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "SERVER_ERROR",
+        message: "Gagal export data booking.",
+      });
+    }
   }
 });
 
