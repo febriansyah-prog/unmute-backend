@@ -555,6 +555,26 @@ app.get("/api/delegates/school/:school_id", async (req, res) => {
   }
 });
 
+app.get("/api/delegates", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        d.id,
+        d.nisn,
+        d.name,
+        d.topic,
+        s.name AS school_name
+      FROM delegates d
+      JOIN schools s ON d.school_id = s.id
+      ORDER BY s.name ASC, d.name ASC
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal mengambil semua data siswa." });
+  }
+});
+
 app.post("/api/delegates", async (req, res) => {
   try {
     const { school_id, nisn, name, topic } = req.body;
