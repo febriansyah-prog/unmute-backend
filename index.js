@@ -60,6 +60,28 @@ app.get("/api/init-db", async (req, res) => {
   }
 });
 
+app.get("/api/migrate", async (req, res) => {
+  try {
+    const query = `
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Menunggu';
+      
+      CREATE TABLE IF NOT EXISTS delegates (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          school_id UUID REFERENCES schools(id) ON DELETE CASCADE,
+          nisn VARCHAR(50) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          topic VARCHAR(100) NOT NULL,
+          created_at TIMESTAMP DEFAULT NOW()
+      );
+    `;
+    await pool.query(query);
+    res.json({ message: "Migration completed successfully." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR", message: err.message });
+  }
+});
+
 const HOLIDAYS = [
   "2026-05-01",
   "2026-05-04",
@@ -282,7 +304,8 @@ app.get("/api/bookings", async (req, res) => {
         b.booking_date AS date,
         s.name AS school_name,
         b.contact_name AS pic,
-        b.phone_number AS phone
+        b.phone_number AS phone,
+        b.status
       FROM bookings b
       JOIN schools s ON b.school_id = s.id
       ORDER BY b.booking_date ASC
@@ -468,6 +491,115 @@ app.delete("/api/bookings/:id", async (req, res) => {
   }
 });
 
+app.put("/api/bookings/:id/status", async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  try {
+    const current = await pool.query("SELECT id FROM bookings WHERE id = $1", [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "Booking tidak ditemukan." });
+    }
+
+    const result = await pool.query(
+      "UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *",
+      [status, id]
+    );
+
+    return res.json({ message: "Status berhasil diperbarui.", booking: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal memperbarui status." });
+  }
+});
+
+// ================================
+// DELEGATES
+// ================================
+
+app.get("/api/delegates/school/:school_id", async (req, res) => {
+  try {
+    const { school_id } = req.params;
+    const result = await pool.query(
+      "SELECT * FROM delegates WHERE school_id = $1 ORDER BY created_at ASC",
+      [school_id]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal mengambil data siswa." });
+  }
+});
+
+app.post("/api/delegates", async (req, res) => {
+  try {
+    const { school_id, nisn, name, topic } = req.body;
+    
+    // Check max 10
+    const countRes = await pool.query("SELECT COUNT(*) FROM delegates WHERE school_id = $1", [school_id]);
+    if (parseInt(countRes.rows[0].count) >= 10) {
+      return res.status(400).json({ error: "LIMIT_REACHED", message: "Maksimal 10 siswa per sekolah." });
+    }
+
+    const duplicate = await pool.query("SELECT id FROM delegates WHERE nisn = $1 AND school_id = $2", [nisn, school_id]);
+    if (duplicate.rowCount > 0) {
+      return res.status(409).json({ error: "DUPLICATE", message: "NISN sudah terdaftar di sekolah ini." });
+    }
+
+    const result = await pool.query(
+      "INSERT INTO delegates (school_id, nisn, name, topic) VALUES ($1, $2, $3, $4) RETURNING *",
+      [school_id, nisn, name, topic]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal menambahkan siswa." });
+  }
+});
+
+app.put("/api/delegates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nisn, name, topic } = req.body;
+
+    const current = await pool.query("SELECT school_id FROM delegates WHERE id = $1", [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "Siswa tidak ditemukan." });
+    }
+
+    const duplicate = await pool.query(
+      "SELECT id FROM delegates WHERE nisn = $1 AND school_id = $2 AND id <> $3",
+      [nisn, current.rows[0].school_id, id]
+    );
+    if (duplicate.rowCount > 0) {
+      return res.status(409).json({ error: "DUPLICATE", message: "NISN sudah digunakan oleh siswa lain." });
+    }
+
+    const result = await pool.query(
+      "UPDATE delegates SET nisn = $1, name = $2, topic = $3 WHERE id = $4 RETURNING *",
+      [nisn, name, topic, id]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal memperbarui siswa." });
+  }
+});
+
+app.delete("/api/delegates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("DELETE FROM delegates WHERE id = $1 RETURNING id", [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "Siswa tidak ditemukan." });
+    }
+    return res.json({ message: "Siswa berhasil dihapus." });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal menghapus siswa." });
+  }
+});
+
 // ================================
 // EXPORT EXCEL
 // ================================
@@ -547,6 +679,86 @@ app.get("/api/export/bookings", async (req, res) => {
       res.status(500).json({
         error: "SERVER_ERROR",
         message: "Gagal export data booking.",
+      });
+    }
+  }
+});
+
+app.get("/api/export/delegates", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        d.nisn,
+        d.name AS student_name,
+        s.name AS school_name,
+        d.topic
+      FROM delegates d
+      JOIN schools s ON d.school_id = s.id
+      ORDER BY s.name ASC, d.name ASC
+    `);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Perwakilan Sekolah");
+
+    worksheet.mergeCells("A1:E1");
+    worksheet.getCell("A1").value = "DAFTAR PERWAKILAN SEKOLAH (DELEGASI)";
+    worksheet.getCell("A1").font = { bold: true, size: 16 };
+    worksheet.getCell("A1").alignment = { horizontal: "center" };
+
+    worksheet.columns = [
+      { header: "No", key: "no", width: 8 },
+      { header: "NISN", key: "nisn", width: 20 },
+      { header: "Nama Siswa", key: "student_name", width: 35 },
+      { header: "Asal Sekolah", key: "school_name", width: 35 },
+      { header: "Topik Materi", key: "topic", width: 30 },
+    ];
+
+    worksheet.spliceRows(2, 0, ["No", "NISN", "Nama Siswa", "Asal Sekolah", "Topik Materi"]);
+
+    result.rows.forEach((row, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        nisn: row.nisn,
+        student_name: row.student_name,
+        school_name: row.school_name,
+        topic: row.topic,
+      });
+    });
+
+    worksheet.getRow(2).font = { bold: true };
+    worksheet.getRow(2).alignment = { horizontal: "center" };
+
+    worksheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+        cell.alignment = { vertical: "middle" };
+      });
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=daftar-perwakilan-sekolah.xlsx"
+    );
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Pragma", "no-cache");
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "SERVER_ERROR",
+        message: "Gagal export data delegasi.",
       });
     }
   }
