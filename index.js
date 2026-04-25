@@ -73,6 +73,12 @@ app.get("/api/migrate", async (req, res) => {
           topic VARCHAR(100) NOT NULL,
           created_at TIMESTAMP DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS settings (
+          key VARCHAR(50) PRIMARY KEY,
+          value TEXT NOT NULL
+      );
+      
+      INSERT INTO settings (key, value) VALUES ('admin_password', 'admin123') ON CONFLICT DO NOTHING;
     `;
     await pool.query(query);
     res.json({ message: "Migration completed successfully." });
@@ -138,6 +144,7 @@ function validateBookingDate(dateStr) {
 }
 
 function formatIndonesianDate(value) {
+  if (!value) return "";
   const date = new Date(value);
   return new Intl.DateTimeFormat("id-ID", {
     weekday: "long",
@@ -146,6 +153,57 @@ function formatIndonesianDate(value) {
     year: "numeric",
   }).format(date);
 }
+
+// Authentication Endpoints
+app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (username !== "admin") {
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Username atau password salah" });
+    }
+
+    const result = await pool.query("SELECT value FROM settings WHERE key = 'admin_password'");
+    const currentPassword = result.rows.length > 0 ? result.rows[0].value : "admin123";
+
+    if (password === currentPassword) {
+      res.json({ success: true, message: "Login berhasil" });
+    } else {
+      res.status(401).json({ error: "UNAUTHORIZED", message: "Username atau password salah" });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "SERVER_ERROR", message: "Terjadi kesalahan sistem" });
+  }
+});
+
+app.post("/api/change-password", async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    
+    // Verify old password
+    const result = await pool.query("SELECT value FROM settings WHERE key = 'admin_password'");
+    const currentPassword = result.rows.length > 0 ? result.rows[0].value : "admin123";
+
+    if (oldPassword !== currentPassword) {
+      return res.status(400).json({ error: "INVALID_PASSWORD", message: "Password lama tidak sesuai" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "WEAK_PASSWORD", message: "Password baru minimal 6 karakter" });
+    }
+
+    // Update password
+    await pool.query(
+      "INSERT INTO settings (key, value) VALUES ('admin_password', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+      [newPassword]
+    );
+
+    res.json({ success: true, message: "Password berhasil diubah" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "SERVER_ERROR", message: "Gagal mengubah password" });
+  }
+});
 
 // ================================
 // SCHOOLS
