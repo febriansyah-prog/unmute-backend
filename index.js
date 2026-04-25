@@ -646,7 +646,8 @@ app.get("/api/export/bookings", async (req, res) => {
         b.booking_date AS date,
         s.name AS school_name,
         b.contact_name AS pic,
-        b.phone_number AS phone
+        b.phone_number AS phone,
+        b.status
       FROM bookings b
       JOIN schools s ON b.school_id = s.id
       ORDER BY b.booking_date ASC
@@ -655,7 +656,7 @@ app.get("/api/export/bookings", async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Daftar Booking");
 
-    worksheet.mergeCells("A1:E1");
+    worksheet.mergeCells("A1:F1");
     worksheet.getCell("A1").value = "DAFTAR BOOKING KEGIATAN";
     worksheet.getCell("A1").font = { bold: true, size: 16 };
     worksheet.getCell("A1").alignment = { horizontal: "center" };
@@ -666,9 +667,10 @@ app.get("/api/export/bookings", async (req, res) => {
       { header: "PIC", key: "pic", width: 25 },
       { header: "No HP", key: "phone", width: 20 },
       { header: "Tanggal Booking", key: "date", width: 30 },
+      { header: "Status", key: "status", width: 25 },
     ];
 
-    worksheet.spliceRows(2, 0, ["No", "Nama Sekolah", "PIC", "No HP", "Tanggal Booking"]);
+    worksheet.spliceRows(2, 0, ["No", "Nama Sekolah", "PIC", "No HP", "Tanggal Booking", "Status"]);
 
     result.rows.forEach((row, index) => {
       worksheet.addRow({
@@ -677,6 +679,7 @@ app.get("/api/export/bookings", async (req, res) => {
         pic: row.pic,
         phone: row.phone,
         date: formatIndonesianDate(row.date),
+        status: row.status || "Menunggu",
       });
     });
 
