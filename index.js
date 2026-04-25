@@ -19,46 +19,29 @@ const pool = new Pool({
     "postgresql://postgres:Qwaszx%402188@localhost:5432/unmute_db",
 });
 
-app.get("/api/init-db", async (req, res) => {
+app.get("/api/migrate-db", async (req, res) => {
   try {
     const query = `
-      DROP TABLE IF EXISTS audit_logs;
-      DROP TABLE IF EXISTS bookings;
-      DROP TABLE IF EXISTS schools;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
 
-      CREATE TABLE schools (
+      CREATE TABLE IF NOT EXISTS delegates (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          name VARCHAR(255) NOT NULL,
-          logo_url TEXT,
-          created_at TIMESTAMP DEFAULT NOW()
-      );
-
-      CREATE TABLE bookings (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          booking_date DATE UNIQUE NOT NULL,
           school_id UUID REFERENCES schools(id) ON DELETE CASCADE,
-          contact_name VARCHAR(255) NOT NULL,
-          phone_number VARCHAR(20) NOT NULL,
+          nisn VARCHAR(50) NOT NULL,
+          student_name VARCHAR(255) NOT NULL,
+          topic VARCHAR(100) NOT NULL,
           created_at TIMESTAMP DEFAULT NOW()
-      );
-
-      CREATE TABLE audit_logs (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          admin_id VARCHAR(255) NOT NULL,
-          action VARCHAR(50) NOT NULL,
-          target_id UUID NOT NULL,
-          old_values JSONB,
-          new_values JSONB,
-          timestamp TIMESTAMP DEFAULT NOW()
       );
     `;
     await pool.query(query);
-    res.json({ message: "Database reinitialized successfully." });
+    res.json({ message: "Database migrated successfully." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "DB_ERROR", message: err.message });
   }
 });
+
+app.get("/api/init-db", async (req, res) => {
 
 const HOLIDAYS = [
   "2026-05-01",
@@ -282,7 +265,8 @@ app.get("/api/bookings", async (req, res) => {
         b.booking_date AS date,
         s.name AS school_name,
         b.contact_name AS pic,
-        b.phone_number AS phone
+        b.phone_number AS phone,
+        b.status
       FROM bookings b
       JOIN schools s ON b.school_id = s.id
       ORDER BY b.booking_date ASC
@@ -295,6 +279,42 @@ app.get("/api/bookings", async (req, res) => {
       error: "SERVER_ERROR",
       message: "Gagal mengambil data booking.",
     });
+  }
+});
+
+});
+
+// Update booking status
+app.patch("/api/bookings/:id/status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const result = await pool.query(
+      "UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *",
+      [status, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "NOT_FOUND" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
+  }
+});
+
+// Update booking status
+app.patch("/api/bookings/:id/status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const result = await pool.query(
+      "UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *",
+      [status, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "NOT_FOUND" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
   }
 });
 
@@ -547,6 +567,144 @@ app.get("/api/export/bookings", async (req, res) => {
         message: "Gagal export data booking.",
       });
     }
+  }
+});
+
+// ================================
+// DELEGATES
+// ================================
+
+// Get all delegates for a specific school (or all if no school_id)
+app.get("/api/delegates", async (req, res) => {
+  try {
+    const { school_id } = req.query;
+    let query = `
+      SELECT d.*, s.name as school_name 
+      FROM delegates d 
+      JOIN schools s ON d.school_id = s.id
+    `;
+    const params = [];
+    if (school_id) {
+      query += ` WHERE d.school_id = $1`;
+      params.push(school_id);
+    }
+    query += ` ORDER BY d.created_at DESC`;
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
+  }
+});
+
+// Add a delegate
+app.post("/api/delegates", async (req, res) => {
+  try {
+    const { school_id, nisn, student_name, topic } = req.body;
+    
+    // Check limit
+    const countRes = await pool.query("SELECT COUNT(*) FROM delegates WHERE school_id = $1", [school_id]);
+    if (parseInt(countRes.rows[0].count) >= 10) {
+      return res.status(400).json({ error: "LIMIT_REACHED", message: "Maksimal 10 siswa perwakilan per sekolah." });
+    }
+
+    const result = await pool.query(
+      "INSERT INTO delegates (school_id, nisn, student_name, topic) VALUES ($1, $2, $3, $4) RETURNING *",
+      [school_id, nisn, student_name, topic]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
+  }
+});
+
+// Update a delegate
+app.put("/api/delegates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nisn, student_name, topic } = req.body;
+    const result = await pool.query(
+      "UPDATE delegates SET nisn = $1, student_name = $2, topic = $3 WHERE id = $4 RETURNING *",
+      [nisn, student_name, topic, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "NOT_FOUND" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
+  }
+});
+
+// Delete a delegate
+app.delete("/api/delegates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM delegates WHERE id = $1", [id]);
+    res.json({ message: "Delegate deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "DB_ERROR" });
+  }
+});
+
+app.get("/api/export/delegates", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        d.nisn,
+        d.student_name,
+        s.name AS school_name,
+        d.topic
+      FROM delegates d
+      JOIN schools s ON d.school_id = s.id
+      ORDER BY s.name ASC, d.student_name ASC
+    `);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Perwakilan Sekolah");
+
+    worksheet.columns = [
+      { header: "No", key: "no", width: 5 },
+      { header: "NISN", key: "nisn", width: 15 },
+      { header: "Nama Siswa", key: "student_name", width: 30 },
+      { header: "Asal Sekolah", key: "school_name", width: 35 },
+      { header: "Topik Materi", key: "topic", width: 25 },
+    ];
+
+    result.rows.forEach((row, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        nisn: row.nisn,
+        student_name: row.student_name,
+        school_name: row.school_name,
+        topic: row.topic,
+      });
+    });
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF4F2D87" },
+    };
+    worksheet.getRow(1).font = { color: { argb: "FFFFFFFF" }, bold: true };
+
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Data_Perwakilan_Sekolah_Unmute.xlsx"
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("Excel generation error:", err);
+    res.status(500).json({ error: "EXPORT_ERROR", message: err.message });
   }
 });
 
