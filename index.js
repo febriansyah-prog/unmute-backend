@@ -600,6 +600,17 @@ app.delete("/api/delegates/:id", async (req, res) => {
   }
 });
 
+app.delete("/api/delegates/school/:school_id", async (req, res) => {
+  try {
+    const { school_id } = req.params;
+    await pool.query("DELETE FROM delegates WHERE school_id = $1", [school_id]);
+    return res.json({ message: "Semua delegasi sekolah berhasil dihapus." });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "SERVER_ERROR", message: "Gagal menghapus delegasi sekolah." });
+  }
+});
+
 // ================================
 // EXPORT EXCEL
 // ================================
