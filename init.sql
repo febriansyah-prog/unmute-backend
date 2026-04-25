@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS bookings (
     school_id UUID REFERENCES schools(id) ON DELETE RESTRICT, -- Changed from CASCADE
     contact_name VARCHAR(255) NOT NULL,
     phone_number VARCHAR(20) NOT NULL,
-    status VARCHAR(50) DEFAULT 'Menunggu',
     created_at TIMESTAMP DEFAULT NOW(),
     
     -- Constraint: Prevent Weekends (0=Sunday, 6=Saturday)
@@ -47,14 +46,4 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     old_values JSONB,
     new_values JSONB,
     timestamp TIMESTAMP DEFAULT NOW()
-);
-
--- 4. Delegates Table
-CREATE TABLE IF NOT EXISTS delegates (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    school_id UUID REFERENCES schools(id) ON DELETE CASCADE,
-    nisn VARCHAR(50) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    topic VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
 );
