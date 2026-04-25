@@ -359,6 +359,18 @@ app.post("/api/bookings", async (req, res) => {
       });
     }
 
+    const existingPhone = await pool.query(
+      "SELECT id FROM bookings WHERE phone_number = $1",
+      [data.phone_number]
+    );
+
+    if (existingPhone.rowCount > 0) {
+      return res.status(409).json({
+        error: "CONFLICT",
+        message: "Nomor WhatsApp ini sudah digunakan pada booking lain.",
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO bookings (booking_date, school_id, contact_name, phone_number)
        VALUES ($1, $2, $3, $4)
@@ -431,6 +443,18 @@ app.put("/api/bookings/:id", async (req, res) => {
       return res.status(409).json({
         error: "CONFLICT",
         message: "Tanggal ini sudah dipilih oleh sekolah lain.",
+      });
+    }
+
+    const existingPhone = await pool.query(
+      "SELECT id FROM bookings WHERE phone_number = $1 AND id <> $2",
+      [data.phone_number, id]
+    );
+
+    if (existingPhone.rowCount > 0) {
+      return res.status(409).json({
+        error: "CONFLICT",
+        message: "Nomor WhatsApp ini sudah digunakan pada booking lain.",
       });
     }
 
@@ -541,9 +565,9 @@ app.post("/api/delegates", async (req, res) => {
       return res.status(400).json({ error: "LIMIT_REACHED", message: "Maksimal 10 siswa per sekolah." });
     }
 
-    const duplicate = await pool.query("SELECT id FROM delegates WHERE nisn = $1 AND school_id = $2", [nisn, school_id]);
+    const duplicate = await pool.query("SELECT id FROM delegates WHERE nisn = $1", [nisn]);
     if (duplicate.rowCount > 0) {
-      return res.status(409).json({ error: "DUPLICATE", message: "NISN sudah terdaftar di sekolah ini." });
+      return res.status(409).json({ error: "DUPLICATE", message: "NISN ini sudah terdaftar." });
     }
 
     const result = await pool.query(
@@ -568,11 +592,11 @@ app.put("/api/delegates/:id", async (req, res) => {
     }
 
     const duplicate = await pool.query(
-      "SELECT id FROM delegates WHERE nisn = $1 AND school_id = $2 AND id <> $3",
-      [nisn, current.rows[0].school_id, id]
+      "SELECT id FROM delegates WHERE nisn = $1 AND id <> $2",
+      [nisn, id]
     );
     if (duplicate.rowCount > 0) {
-      return res.status(409).json({ error: "DUPLICATE", message: "NISN sudah digunakan oleh siswa lain." });
+      return res.status(409).json({ error: "DUPLICATE", message: "NISN ini sudah terdaftar oleh siswa lain." });
     }
 
     const result = await pool.query(
